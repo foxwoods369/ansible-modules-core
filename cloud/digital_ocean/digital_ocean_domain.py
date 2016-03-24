@@ -107,6 +107,12 @@ class DomainRecord(JsonfyMixIn):
         self.domain_name = domain_name
     update_attr = __init__
 
+    def add(self):
+        json = self.manager.new_domain_record(self.domain_name,
+                                              self.type,
+                                              self.data,
+                                              name=self.name)
+
     def update(self, data = None, type = None):
         json = self.manager.edit_domain_record(self.domain_name,
                                                self.id,
@@ -173,7 +179,7 @@ def core(module):
     except KeyError, e:
         module.fail_json(msg='Unable to load %s' % e.message)
 
-    changed = True
+    changed = False
     state = module.params['state']
 
     Domain.setup(api_token)
@@ -183,7 +189,7 @@ def core(module):
         if not domain:
             domain = Domain.add(getkeyordie("name"),
                                 getkeyordie("ip"))
-            module.exit_json(changed=True, domain=domain.to_json())
+            changed = True
         else:
             records = domain.records()
             at_record = None
@@ -193,9 +199,24 @@ def core(module):
 
             if not at_record.data == getkeyordie("ip"):
                 at_record.update(data=getkeyordie("ip"), type='A')
-                module.exit_json(changed=True, domain=Domain.find(id=record.domain_name).to_json())
+                changed = True
 
-        module.exit_json(changed=False, domain=domain.to_json())
+        records = getkeyordie("records")
+        if records:
+            domain_records = domain.records()
+            def record_match(record, domain_record):
+                return record.viewitems() <= domain_record.__dict__.viewitems()
+            for record in records:
+                matching = filter(lambda domain_record: record_match(record, domain_record), domain_records)
+                if len(matching) > 1:
+                    module.fail_json(msg='Multiple matches {} found for record {}'.format(matching, record))
+                elif not matching:
+                    changed = True
+                    new_record = DomainRecord(domain.name, record.to_json())
+                    new_record.add()
+                    domain_records.append(new_record)
+
+        module.exit_json(changed=changed, domain=domain.to_json())
 
     elif state in ('absent'):
         domain = None
@@ -220,6 +241,7 @@ def main():
             name = dict(type='str'),
             id = dict(aliases=['droplet_id'], type='int'),
             ip = dict(type='str'),
+            records = dict(type='list'),
         ),
         required_one_of = (
             ['id', 'name'],
@@ -232,8 +254,8 @@ def main():
         core(module)
     except TimeoutError as e:
         module.fail_json(msg=str(e), id=e.id)
-    except (DoError, Exception) as e:
-        module.fail_json(msg=str(e))
+#    except (DoError, Exception) as e:
+#        module.fail_json(msg=str(e))
 
 # import module snippets
 from ansible.module_utils.basic import *
