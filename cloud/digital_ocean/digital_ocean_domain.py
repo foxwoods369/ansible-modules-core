@@ -46,7 +46,7 @@ options:
 notes:
   - Two environment variables can be used, DO_API_KEY and DO_API_TOKEN. They both refer to the v2 token.
   - As of Ansible 1.9.5 and 2.0, Version 2 of the DigitalOcean API is used, this removes C(client_id) and C(api_key) options in favor of C(api_token).
-  - If you are running Ansible 1.9.4 or earlier you might not be able to use the included version of this module as the API version used has been retired. 
+  - If you are running Ansible 1.9.4 or earlier you might not be able to use the included version of this module as the API version used has been retired.
 
 requirements:
   - "python >= 2.6"
@@ -102,20 +102,27 @@ class JsonfyMixIn(object):
 class DomainRecord(JsonfyMixIn):
     manager = None
 
-    def __init__(self, json):
+    def __init__(self, domain_name, json):
         self.__dict__.update(json)
+        self.domain_name = domain_name
     update_attr = __init__
 
-    def update(self, data = None, record_type = None):
-        json = self.manager.edit_domain_record(self.domain_id,
+    def add(self):
+        json = self.manager.new_domain_record(self.domain_name,
+                                              self.type,
+                                              self.data,
+                                              name=self.name)
+
+    def update(self, data = None, type = None):
+        json = self.manager.edit_domain_record(self.domain_name,
                                                self.id,
-                                               record_type if record_type is not None else self.record_type,
+                                               type if type is not None else self.type,
                                                data if data is not None else self.data)
         self.__dict__.update(json)
         return self
 
     def destroy(self):
-        json = self.manager.destroy_domain_record(self.domain_id, self.id)
+        json = self.manager.destroy_domain_record(self.domain_name, self.id)
         return json
 
 class Domain(JsonfyMixIn):
@@ -125,11 +132,11 @@ class Domain(JsonfyMixIn):
         self.__dict__.update(domain_json)
 
     def destroy(self):
-        self.manager.destroy_domain(self.id)
+        self.manager.destroy_domain(self.name)
 
     def records(self):
-        json = self.manager.all_domain_records(self.id)
-        return map(DomainRecord, json)
+        json = self.manager.all_domain_records(self.name)
+        return map(lambda x: DomainRecord(self.name, x), json)
 
     @classmethod
     def add(cls, name, ip):
@@ -153,11 +160,6 @@ class Domain(JsonfyMixIn):
 
         domains = Domain.list_all()
 
-        if id is not None:
-            for domain in domains:
-                if domain.id == id:
-                    return domain
-
         if name is not None:
             for domain in domains:
                 if domain.name == name:
@@ -177,32 +179,44 @@ def core(module):
     except KeyError, e:
         module.fail_json(msg='Unable to load %s' % e.message)
 
-    changed = True
+    changed = False
     state = module.params['state']
 
     Domain.setup(api_token)
     if state in ('present'):
-        domain = Domain.find(id=module.params["id"])
-
-        if not domain:
-            domain = Domain.find(name=getkeyordie("name"))
+        domain = Domain.find(name=getkeyordie("name"))
 
         if not domain:
             domain = Domain.add(getkeyordie("name"),
                                 getkeyordie("ip"))
-            module.exit_json(changed=True, domain=domain.to_json())
+            changed = True
         else:
             records = domain.records()
             at_record = None
             for record in records:
-                if record.name == "@" and record.record_type == 'A':
+                if record.name == "@" and record.type == 'A':
                     at_record = record
 
             if not at_record.data == getkeyordie("ip"):
-                record.update(data=getkeyordie("ip"), record_type='A')
-                module.exit_json(changed=True, domain=Domain.find(id=record.domain_id).to_json())
+                at_record.update(data=getkeyordie("ip"), type='A')
+                changed = True
 
-        module.exit_json(changed=False, domain=domain.to_json())
+        records = getkeyordie("records")
+        if records:
+            domain_records = domain.records()
+            def record_match(record, domain_record):
+                return record.viewitems() <= domain_record.__dict__.viewitems()
+            for record in records:
+                matching = filter(lambda domain_record: record_match(record, domain_record), domain_records)
+                if len(matching) > 1:
+                    module.fail_json(msg='Multiple matches {} found for record {}'.format(matching, record))
+                elif not matching:
+                    changed = True
+                    new_record = DomainRecord(domain.name, record)
+                    new_record.add()
+                    domain_records.append(new_record)
+
+        module.exit_json(changed=changed, domain=domain.to_json())
 
     elif state in ('absent'):
         domain = None
@@ -227,6 +241,7 @@ def main():
             name = dict(type='str'),
             id = dict(aliases=['droplet_id'], type='int'),
             ip = dict(type='str'),
+            records = dict(type='list'),
         ),
         required_one_of = (
             ['id', 'name'],
@@ -239,8 +254,8 @@ def main():
         core(module)
     except TimeoutError as e:
         module.fail_json(msg=str(e), id=e.id)
-    except (DoError, Exception) as e:
-        module.fail_json(msg=str(e))
+#    except (DoError, Exception) as e:
+#        module.fail_json(msg=str(e))
 
 # import module snippets
 from ansible.module_utils.basic import *

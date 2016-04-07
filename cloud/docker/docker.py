@@ -564,7 +564,7 @@ def _human_to_bytes(number):
             return int(number[:-len(each)]) * (1024 ** i)
         i = i + 1
 
-    raise ValueError('Could not convert %s to integer' % (number,))
+    return int(number)
 
 
 def _ansible_facts(container_list):
@@ -1439,8 +1439,8 @@ class DockerManager(object):
 
             # NETWORK MODE
 
-            expected_netmode = self.module.params.get('net') or 'bridge'
-            actual_netmode = container['HostConfig']['NetworkMode'] or 'bridge'
+            expected_netmode = self.module.params.get('net') or 'default' #'bridge'
+            actual_netmode = container['HostConfig']['NetworkMode'] or 'default' #'bridge'
             if actual_netmode != expected_netmode:
                 self.reload_reasons.append('net ({0} => {1})'.format(actual_netmode, expected_netmode))
                 differing.append(container)
@@ -1842,12 +1842,12 @@ def main():
             ports           = dict(required=False, default=None, type='list'),
             publish_all_ports = dict(default=False, type='bool'),
             volumes         = dict(default=None, type='list'),
-            volumes_from    = dict(default=None),
+            volumes_from    = dict(default=None, type='list'),
             links           = dict(default=None, type='list'),
             devices         = dict(default=None, type='list'),
             memory_limit    = dict(default=0),
             memory_swap     = dict(default=0),
-            cpu_shares      = dict(default=0),
+            cpu_shares      = dict(default=0, type='int'),
             docker_url      = dict(),
             use_tls         = dict(default=None, choices=['no', 'encrypt', 'verify']),
             tls_client_cert = dict(required=False, default=None, type='str'),
