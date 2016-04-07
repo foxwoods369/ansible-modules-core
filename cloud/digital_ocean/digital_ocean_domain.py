@@ -212,7 +212,7 @@ def core(module):
                     module.fail_json(msg='Multiple matches {} found for record {}'.format(matching, record))
                 elif not matching:
                     changed = True
-                    new_record = DomainRecord(domain.name, record.to_json())
+                    new_record = DomainRecord(domain.name, record)
                     new_record.add()
                     domain_records.append(new_record)
 
